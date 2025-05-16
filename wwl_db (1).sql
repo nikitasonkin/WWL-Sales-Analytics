@@ -1,58 +1,84 @@
-----ùàéìúä îñôø 1
-
-with sce as(
-select 
-year(orderdate) as year , 
-sum(Quantity*UnitPrice) as IncomePerYear ,
-COUNT(DISTINCT MONTH(ORDERDATE)) as NumberOfDistinctMonths,
-cast(sum(Quantity*UnitPrice)/COUNT(DISTINCT MONTH(ORDERDATE))*12 as decimal(10,2))  as LinearYearlyIncome
-from [Sales].[Orders] o  join [Sales].Invoices i on o.OrderID = i.OrderID
-inner join Sales.InvoiceLines il on i.InvoiceID = IL.InvoiceID
-GROUP BY year(orderdate)
-) 
-select year , IncomePerYear , NumberOfDistinctMonths ,LinearYearlyIncome,
-CASE
-     when lag(LinearYearlyIncome) over ( order by year) is not null
-	 then cast(( (LinearYearlyIncome - cast(LAG(LinearYearlyIncome) OVER (ORDER BY year)as decimal(10,2))) 
-                        / LAG(LinearYearlyIncome) OVER (ORDER BY year)) * 100 as decimal(10,2))
-	ELSE NULL
-	 end as GrowthRate 
-from sce 
-order by year
-
-
---ùàéìúä îñôø 2
-
-WITH cte AS (  
-				SELECT YEAR(orderdate) AS TheYear,
-				DATEPART(QUARTER, orderdate) AS TheQuarter,
-				[CustomerName],
-				SUM(Quantity * UnitPrice) AS Income,
-				DENSE_RANK() OVER (partition by YEAR(orderdate),DATEPART(QUARTER, orderdate) ORDER BY SUM(Quantity * UnitPrice) desc) AS DNR
+/*  Query 1 â€“ Year-over-Year Income & Growth  */
+WITH sce AS (
+    SELECT 
+        YEAR(o.OrderDate) AS [Year],
+        SUM(il.Quantity * il.UnitPrice)                    AS IncomePerYear,
+        COUNT(DISTINCT MONTH(o.OrderDate))                AS NumberOfDistinctMonths,
+        CAST(SUM(il.Quantity * il.UnitPrice)
+             / COUNT(DISTINCT MONTH(o.OrderDate)) * 12
+             AS DECIMAL(10,2))                            AS LinearYearlyIncome
+    FROM  Sales.Orders        AS o
+    JOIN  Sales.Invoices      AS i  ON o.OrderID  = i.OrderID
+    JOIN  Sales.InvoiceLines  AS il ON i.InvoiceID = il.InvoiceID
+    GROUP BY YEAR(o.OrderDate)
+)
+SELECT  [Year],
+        IncomePerYear,
+        NumberOfDistinctMonths,
+        LinearYearlyIncome,
+        /* % growth vs. previous year */
+        CASE
+            WHEN LAG(LinearYearlyIncome) OVER (ORDER BY [Year]) IS NOT NULL
+            THEN CAST(
+                (LinearYearlyIncome 
+                 - LAG(LinearYearlyIncome) OVER (ORDER BY [Year]))
+                / LAG(LinearYearlyIncome) OVER (ORDER BY [Year]) * 100
+                AS DECIMAL(10,2))
+        END AS GrowthRate
+FROM  sce
+ORDER BY [Year];
 
 
-		FROM [Sales].[Customers] c inner join [Sales].[Invoices] i on c.CustomerID = i.CustomerID
-		inner join [Sales].[InvoiceLines] ii on i.InvoiceID=ii.InvoiceID
-		inner join [Sales].[Orders] o on i.OrderID = o.OrderID
+/*  Query 2 â€“  Top-5 Customers per Quarter (By Income)   */
+WITH cte AS (
+    SELECT
+        YEAR(o.OrderDate)   AS TheYear,   -- Calendar year of the order
+        DATEPART(QUARTER, o.OrderDate)   AS TheQuarter, -- 1..4 quarter number
+        c.CustomerName,  -- Customer being analysed
+        SUM(ii.Quantity * ii.UnitPrice)  AS Income,-- Total sales value
+        /* Dense rank: 1 = highest Income within each year-quarter */
+        DENSE_RANK() OVER (PARTITION BY
+                           YEAR(o.OrderDate),
+                           DATEPART(QUARTER, o.OrderDate)
+                           ORDER BY SUM(ii.Quantity * ii.UnitPrice) DESC) AS DNR
+    FROM  Sales.Customers     AS c
+    INNER JOIN Sales.Invoices       AS i  ON c.CustomerID = i.CustomerID
+    INNER JOIN Sales.InvoiceLines   AS ii ON i.InvoiceID  = ii.InvoiceID
+    INNER JOIN Sales.Orders         AS o  ON i.OrderID    = o.OrderID
+    /* Aggregate per customer, year & quarter */
+    GROUP BY
+        YEAR(o.OrderDate),
+        DATEPART(QUARTER, o.OrderDate),
+        c.CustomerName
+)
+
+/* Select only the top-5 (DNR â‰¤ 5) for each year-quarter */
+SELECT  TheYear,
+        TheQuarter,
+        CustomerName,
+        Income,
+        DNR    -- Rank position (1-5)
+FROM    cte
+WHERE   DNR <= 5  -- keep Top-5 per quarter
+ORDER BY TheYear, TheQuarter, DNR;  -- chronological then rank order
 
 
-    GROUP BY YEAR(orderdate),DATEPART(QUARTER, orderdate),[CustomerName])
+/*  Query 3 â€“  Top-10 Most Profitable Stock Items  */
+SELECT TOP 10
+       si.StockItemID,
+       si.StockItemName,
+       SUM(il.ExtendedPrice - il.TaxAmount) AS TotalProfit  -- gross profit per item
+FROM   Warehouse.StockItems  AS si
+INNER JOIN Sales.InvoiceLines AS il
+       ON il.StockItemID = si.StockItemID -- link each invoice line to its stock item
+GROUP BY
+       si.StockItemID,
+       si.StockItemName
+ORDER BY
+       TotalProfit DESC;  -- highest profit first
 
-SELECT TheYear,TheQuarter,[CustomerName],Income,DNR
-FROM cte
-WHERE DNR <= 5
-ORDER BY TheYear, TheQuarter , DNR ;
 
-
---ùàéìúä îñôø 3
-
-select top 10  si.[StockItemID],[StockItemName],SUM([ExtendedPrice] - il.TaxAmount) AS TotalProfit
-from [Warehouse].[StockItems] si inner join [Sales].[InvoiceLines] il on il.StockItemID = si.StockItemID
-group by si.[StockItemID],[StockItemName]
-order by TotalProfit desc
-
---ùàéìúä îñ 4
-
+/*  Query 4 â€“  Nominal Product Profit & Ranking  */
 Select ROW_NUMBER() over(order by NominalProductProdit desc) as rn,* , 
 DENSE_RANK() over (order by NominalProductProdit desc) as DNR
 from ( select 
@@ -60,138 +86,188 @@ from ( select
 [RecommendedRetailPrice] - [UnitPrice] as NominalProductProdit
 from [Warehouse].[StockItems] ) a
 
---ùàéìúä îñô÷ 5
+	
+/*  Query 5 â€“ Supplier-Product Roll-Up (Comma-Separated List) */
+SELECT *
+FROM (
+    SELECT
+        /* Combine ID + name for readability */
+        CAST(s.SupplierID AS VARCHAR) + ' ' + s.SupplierName      AS SupplierDetails,
 
-select * from (
-Select 
-cast(s.SupplierID as varchar)  + ' ' + s.SupplierName as SupplierDetails,
-STUFF((
-	select '/, ' + cast(si.StockItemID as varchar) + ' ' + si.StockItemName
-	from [Warehouse].[StockItems] si
-	where si.SupplierID = s.SupplierID 
-	FOR XML PATH('')), 1, 2, '') AS ProductDetails
-from [Purchasing].[Suppliers] s) a 
-
-where ProductDetails is not null
-
-
-
---ùàéìúä îñôø 6
-
-select top 5 
-c.CustomerID, ac.CityName , acc.CountryName , acc.Continent , acc.Region,
-format(sum(ExtendedPrice), '#,##0.00') as TotalExtendedPrice
+        /* Build CSV-style list of all items sold by this supplier */
+        STUFF((
+            SELECT '/, ' + CAST(si.StockItemID AS VARCHAR) + ' ' + si.StockItemName
+            FROM   Warehouse.StockItems AS si
+            WHERE  si.SupplierID = s.SupplierID
+            FOR XML PATH('')             -- concatenate into one XML string
+        ), 1, 2, '')                                            AS ProductDetails
+    FROM Purchasing.Suppliers AS s
+) a
+/* Keep only suppliers that have at least one product */
+WHERE ProductDetails IS NOT NULL;
 
 
-from [Sales].[Customers] c inner join [Sales].[Invoices] i on c.CustomerID=i.CustomerID
-inner join [Sales].[InvoiceLines] il on i.InvoiceID = il.InvoiceID
-inner join [Application].[Cities] ac on c.DeliveryCityID = ac.CityID
-inner join [Application].[StateProvinces] sp on ac.StateProvinceID = sp.StateProvinceID
-inner join [Application].[Countries] acc on sp.CountryID = acc.CountryID
+/*  Query 6 â€“ Top-5 Customers by Total Extended Price + Geo Details */
+SELECT TOP 5
+       c.CustomerID,
+       ac.CityName,
+       acc.CountryName,
+       acc.Continent,
+       acc.Region,
+       FORMAT(SUM(il.ExtendedPrice), '#,##0.00') AS TotalExtendedPrice
+FROM   Sales.Customers      AS c
+INNER JOIN Sales.Invoices        AS i  ON c.CustomerID   = i.CustomerID
+INNER JOIN Sales.InvoiceLines    AS il ON i.InvoiceID    = il.InvoiceID
+INNER JOIN Application.Cities            AS ac ON c.DeliveryCityID = ac.CityID
+INNER JOIN Application.StateProvinces    AS sp ON ac.StateProvinceID = sp.StateProvinceID
+INNER JOIN Application.Countries         AS acc ON sp.CountryID      = acc.CountryID
+GROUP BY
+       c.CustomerID,
+       ac.CityName,
+       acc.CountryName,
+       acc.Continent,
+       acc.Region
+ORDER BY
+       SUM(il.ExtendedPrice) DESC;    -- highest spend first
 
-group by c.CustomerID, ac.CityName , acc.CountryName , acc.Continent , acc.Region
-order by sum(ExtendedPrice) desc
 
-
---ùàéìúä 7 
-
+/*  Query 7 â€“ Monthly Sales, Running Totals, and Yearly Grand Totals */
 WITH cte AS (
-    SELECT DISTINCT 
-        YEAR(O.OrderDate) AS OrderYear, MONTH(O.OrderDate) AS OrderMonth,
-        SUM(OL.UnitPrice * OL.Quantity) OVER (PARTITION BY MONTH(O.OrderDate) order by  YEAR(O.OrderDate)) AS Sales,
-        SUM(OL.UnitPrice * OL.Quantity) OVER (PARTITION BY YEAR(O.OrderDate) ORDER BY MONTH(O.OrderDate)) AS RunningTotal
-        from [Sales].[Orders] o 
-    INNER JOIN [Sales].[OrderLines] ol ON o.OrderID = ol.OrderID
-    INNER JOIN [Sales].[Invoices] i ON o.OrderID = i.OrderID
-		
+    /* â€”â€”â€” 1. Detail rows: one for each distinct Year-Month â€”â€”â€” */
+    SELECT DISTINCT
+           YEAR(o.OrderDate)  AS OrderYear,
+           MONTH(o.OrderDate) AS OrderMonth,
+           /* Total sales for that month across all years, by month key */
+           SUM(ol.UnitPrice * ol.Quantity)
+               OVER (PARTITION BY MONTH(o.OrderDate)
+                     ORDER BY YEAR(o.OrderDate))                     AS Sales,
+           /* Running total within the same year */
+           SUM(ol.UnitPrice * ol.Quantity)
+               OVER (PARTITION BY YEAR(o.OrderDate)
+                     ORDER BY MONTH(o.OrderDate))                    AS RunningTotal
+    FROM  Sales.Orders      AS o
+    JOIN  Sales.OrderLines  AS ol ON o.OrderID = ol.OrderID
+    JOIN  Sales.Invoices    AS i  ON o.OrderID = i.OrderID
+
     UNION ALL
 
-    SELECT distinct
-        YEAR(O.OrderDate) AS OrderYear,NULL AS OrderMonth,SUM(OL.UnitPrice * OL.Quantity) AS Sales,SUM(OL.UnitPrice * OL.Quantity) AS RunningTotal
-    from [Sales].[Orders] o 
-    INNER JOIN [Sales].[OrderLines] ol ON o.OrderID = ol.OrderID
-    INNER JOIN [Sales].[Invoices] i ON o.OrderID = i.OrderID
-    GROUP BY YEAR(O.OrderDate))
-
-SELECT 
+    /* â€”â€”â€” 2. Summary rows: one GrandTotal per year â€”â€”â€” */
+    SELECT DISTINCT
+           YEAR(o.OrderDate)  AS OrderYear,
+           NULL               AS OrderMonth,          -- flag for GrandTotal row
+           SUM(ol.UnitPrice * ol.Quantity)            AS Sales,        -- yearly total
+           SUM(ol.UnitPrice * ol.Quantity)            AS RunningTotal  -- same as yearly total
+    FROM  Sales.Orders      AS o
+    JOIN  Sales.OrderLines  AS ol ON o.OrderID = ol.OrderID
+    JOIN  Sales.Invoices    AS i  ON o.OrderID = i.OrderID
+    GROUP BY YEAR(o.OrderDate)
+)
+SELECT
     OrderYear,
-    CASE 
-        WHEN OrderMonth IS NULL THEN 'GrandTotal' 
-        ELSE CAST(OrderMonth AS VARCHAR) 
-    END  as OrderMonth,
-    format(Sales,'#,##0.00') as 'MounthlyTotal', 
-    format(RunningTotal,'#,##0.00') as 'CumulativeTotal'
-FROM cte
-ORDER BY 1, ISNULL(OrderMonth,13)
+    /* Convert NULL month to the label â€œGrandTotalâ€ */
+    CASE WHEN OrderMonth IS NULL
+         THEN 'GrandTotal'
+         ELSE CAST(OrderMonth AS VARCHAR)
+    END                                     AS OrderMonth,
+    FORMAT(Sales,        '#,##0.00')        AS MonthlyTotal,
+    FORMAT(RunningTotal, '#,##0.00')        AS CumulativeTotal
+FROM   cte
+ORDER BY
+    OrderYear,
+    ISNULL(OrderMonth, 13);   -- GrandTotal after month 12
 
 
---ùàéìúä îñôø 8 
+/*  Query 8 â€“ Pivot: Order Counts by Month and Year */
+SELECT *
+FROM (
+    /* Base set: one row per OrderID with its year and month */
+    SELECT DISTINCT
+           MONTH(OrderDate) AS MonthOrder,   -- 1 = January â€¦ 12 = December
+           OrderID,
+           YEAR(OrderDate)  AS YearOrder
+    FROM   Sales.Orders
+) AS a
+PIVOT (
+    COUNT(OrderID)                     -- aggregate: number of orders
+    FOR YearOrder IN ([2013],[2014],[2015],[2016])  -- create 1 column per year
+) AS piv
+ORDER BY MonthOrder;                   -- chronological month order
 
-select * from(
-select distinct month(orderdate) as monthorder,OrderID,YEAR(orderdate) as yearorder
-from [Sales].[Orders]) a
-pivot(count(orderid) for yearorder in ([2013],[2014],[2015],[2016])) as piv
-order by monthorder
 
-
---ùàéìúä îñôø 9 
-
-WITH cte AS (
-    SELECT 
+/*  Query 9 â€“ Customer Order Gaps & Churn Flag */
+WITH cte AS (                        -- Step 1: compute per-order gap
+    SELECT
         c.CustomerID,
         c.CustomerName,
         o.OrderDate,
-        LAG(OrderDate) OVER (PARTITION BY c.CustomerID ORDER BY OrderDate) AS PreviousOrderDate,
 
-		CASE 
-        WHEN LAG(OrderDate) OVER (PARTITION BY c.CustomerID ORDER BY OrderDate) IS NOT NULL 
-        THEN DATEDIFF(DAY, LAG(OrderDate) OVER (PARTITION BY c.CustomerID ORDER BY OrderDate), OrderDate)
-        ELSE NULL
-    END AS DaysSinceLastOrder
+        /* previous order date for the same customer */
+        LAG(o.OrderDate) OVER (PARTITION BY c.CustomerID
+                               ORDER BY     o.OrderDate)  AS PreviousOrderDate,
 
-    FROM 
-        [Sales].[Customers] c
-    INNER JOIN 
-        [Sales].[Orders] o 
-        ON c.CustomerID = o.CustomerID
+        /* days between current and previous order (NULL for first) */
+        CASE
+            WHEN LAG(o.OrderDate) OVER (PARTITION BY c.CustomerID
+                                        ORDER BY     o.OrderDate) IS NOT NULL
+            THEN DATEDIFF(DAY,
+                          LAG(o.OrderDate) OVER (PARTITION BY c.CustomerID
+                                                 ORDER BY     o.OrderDate),
+                          o.OrderDate)
+        END                                               AS DaysSinceLastOrder
+    FROM  Sales.Customers AS c
+    JOIN  Sales.Orders    AS o ON c.CustomerID = o.CustomerID
 )
-SELECT 
+
+SELECT
     CustomerID,
     CustomerName,
     OrderDate,
-	PreviousOrderDate,
-	DaysSinceLastOrder,
-	avg(DaysSinceLastOrder) over (partition by CustomerID) as AvgSinceLastOrder,
+    PreviousOrderDate,
+    DaysSinceLastOrder,
 
-	case
-		when day(PreviousOrderDate) > 2 * avg(DaysSinceLastOrder) over (partition by CustomerID)  
-		then 'Potentiali Churn' 
-		else 'active'
-		end as CustomerStatus
+    /* customer-level mean gap (window aggregate) */
+    AVG(DaysSinceLastOrder) OVER (PARTITION BY CustomerID) AS AvgSinceLastOrder,
 
-FROM  cte
-where customerid in (24,25)
+    /* churn logic: gap > 2 Ã— average â†’ â€œPotential Churnâ€ */
+    CASE
+        WHEN DaysSinceLastOrder >
+             2 * AVG(DaysSinceLastOrder) OVER (PARTITION BY CustomerID)
+        THEN 'Potential Churn'
+        ELSE 'Active'
+    END AS CustomerStatus
+FROM cte
+WHERE CustomerID IN (24, 25);        -- focus on two example customers
 
 
---ùàéìúä îñ 10
-With cte as(
-select 
-cc.CustomerCategoryName,
-		case when CustomerName like 'Wingtip%' then 'Wingtip'
-		when CustomerName like 'tailspin%' then 'tailspin'
-		else CustomerName end as customerName
+/*  Query 10 â€“ Customer Counts & Percent Share by Category */
+WITH cte AS (               -- Step 1: normalise names inside a CTE
+    SELECT
+        cc.CustomerCategoryName,
+        CASE
+            WHEN CustomerName LIKE 'Wingtip%'  THEN 'Wingtip'   -- bucket all Wingtip* names
+            WHEN CustomerName LIKE 'tailspin%' THEN 'tailspin'  -- bucket all tailspin* names
+            ELSE CustomerName                                   -- otherwise keep original
+        END AS CustomerName
+    FROM Sales.CustomerCategories AS cc
+    INNER JOIN Sales.Customers   AS c
+           ON cc.CustomerCategoryID = c.CustomerCategoryID
+)
 
-from sales.CustomerCategories as cc inner join sales.Customers as c
-on cc.CustomerCategoryID = c.CustomerCategoryID)
+/* Step 2: counts and percentages */
+SELECT
+    CustomerCategoryName,
 
-select CustomerCategoryName , count( distinct customerName) as cc,
-sum(count (distinct customerName )) over () as ccc,
-concat(cast((cast(count( distinct customerName) as decimal(10,2))/ cast((sum(count (distinct customerName )) over ())as decimal(10,2))) * 100 as decimal(10,2)),'%') as cccc
-
-from cte
-group by CustomerCategoryName
-order by CustomerCategoryName
-
+    COUNT(DISTINCT CustomerName)                           AS CategoryCount,     -- cc
+    SUM(COUNT(DISTINCT CustomerName)) OVER ()              AS TotalCustomers,    -- ccc
+    CONCAT(
+        CAST(
+            CAST(COUNT(DISTINCT CustomerName) AS DECIMAL(10,2))
+            / CAST(SUM(COUNT(DISTINCT CustomerName)) OVER () AS DECIMAL(10,2))
+            * 100 AS DECIMAL(10,2)
+        ), '%')                                            AS CategoryPct        -- cccc
+FROM   cte
+GROUP BY CustomerCategoryName
+ORDER BY CustomerCategoryName;
 
 
 
