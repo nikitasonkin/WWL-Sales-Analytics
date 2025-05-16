@@ -6,7 +6,7 @@
 
 ## Overview
 This repository contains a curated set of **10 advanced T-SQL queries** designed to extract business-critical insights from Microsoft’s *Wide World Importers* (WWI) sample database.  
-The script `wwl_db.sql` can be used as a ready-made analytics toolkit for answering questions around yearly revenue, customer performance, product profitability, churn detection and more.
+The script `annual_sales_queries.sql` can be used as a ready-made analytics toolkit for answering questions around yearly revenue, customer performance, product profitability, churn detection and more.
 
 ## File Structure
 
@@ -19,7 +19,7 @@ The script `wwl_db.sql` can be used as a ready-made analytics toolkit for answer
 ## How to Run
 1. Open SQL Server Management Studio (SSMS) / Azure Data Studio.  
 2. Select the **WideWorldImporters** context.  
-3. Execute `wwl_db.sql` as-is or copy individual queries as needed.  
+3. Execute `annual_sales_queries.sql` as-is or copy individual queries as needed.  
 4. Review result sets and adjust `WHERE` filters or date ranges to fit your reporting cycle.
 
 ## Query Catalogue
@@ -37,7 +37,7 @@ The script `wwl_db.sql` can be used as a ready-made analytics toolkit for answer
 | 9 | **Customer Activity & Churn Risk** | Days since last order and churn flag. |
 | 10| **Customer Category Distribution** | How are customers distributed across categories? |
 
-*(See inline comments in `wwl_db.sql` for detailed logic.)* :contentReference[oaicite:0]{index=0}:contentReference[oaicite:1]{index=1}
+*(See inline comments in `annual_sales_queries.sql` for detailed logic.)* :contentReference[oaicite:0]{index=0}:contentReference[oaicite:1]{index=1}
 
 ## Customisation Tips
 * Replace hard-coded years or categories with parameters if automating in SSIS/ADF.  
