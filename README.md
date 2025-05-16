@@ -8,10 +8,6 @@
 This repository contains a curated set of **10 advanced T-SQL queries** designed to extract business-critical insights from Microsoft’s *Wide World Importers* (WWI) sample database.  
 The script `annual_sales_queries.sql` can be used as a ready-made analytics toolkit for answering questions around yearly revenue, customer performance, product profitability, churn detection and more.
 
-## File Structure
-
-
-
 ## Prerequisites
 * SQL Server 2019 + (or Azure SQL) with the **WideWorldImporters** and **WideWorldImportersDW** databases installed.
 * Sufficient privileges to create CTEs, run window functions, and use `PIVOT`.
@@ -38,6 +34,8 @@ The script `annual_sales_queries.sql` can be used as a ready-made analytics tool
 | 10| **Customer Category Distribution** | How are customers distributed across categories? |
 
 *(See inline comments in `annual_sales_queries.sql` for detailed logic.)* :contentReference[oaicite:0]{index=0}:contentReference[oaicite:1]{index=1}
+
+## Query Results - `WWL-Sales-Analytics 10 queries.pdf`
 
 ## Customisation Tips
 * Replace hard-coded years or categories with parameters if automating in SSIS/ADF.  
